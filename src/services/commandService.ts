@@ -3,83 +3,123 @@ export function processCommand(command: string): {
   url?: string;
   isBrowserAction: boolean;
 } {
+
   const lowerCmd = command.toLowerCase().trim();
 
-  // General Browsing: "Open [website name]"
-  const openMatch = lowerCmd.match(/^open\s+(.+)$/);
-  if (
-    openMatch &&
-    !lowerCmd.includes("youtube") &&
-    !lowerCmd.includes("spotify")
-  ) {
-    let website = openMatch[1].trim().replace(/\s+/g, "");
-    if (!website.includes(".")) {
-      website += ".com";
+  // -------- Helper function to clean website name --------
+  function cleanSite(site: string) {
+
+    site = site
+      .replace(/https?:\/\//g, "")
+      .replace(/www\./g, "")
+      .replace(/website|site|official|page/g, "")
+      .trim();
+
+    site = site.replace(/\s+/g, "");
+
+    if (!site.includes(".")) {
+      site = site + ".com";
     }
+
+    return site;
+  }
+
+  // -------- OPEN WEBSITE --------
+  const openMatch = lowerCmd.match(/(open|go to|visit|khol|kholna|kholo|khol do)\s+(.+)/);
+
+  if (openMatch) {
+
+    let site = cleanSite(openMatch[2]);
+
     return {
-      action: `Opening ${openMatch[1]} for you, ugh.`,
-      url: `https://www.${website}`,
+      action: `Opening ${site}`,
+      url: `https://${site}`,
       isBrowserAction: true,
     };
   }
 
-  // Media Search: "Play [song/video] on YouTube"
-  const ytMatch = lowerCmd.match(/^play\s+(.+?)\s+on\s+youtube$/);
-  if (ytMatch) {
-    const query = encodeURIComponent(ytMatch[1].trim());
+  // -------- YOUTUBE SEARCH --------
+  const ytSearchMatch = lowerCmd.match(/search (.+) on youtube/);
+
+  if (ytSearchMatch) {
+
+    const query = encodeURIComponent(ytSearchMatch[1]);
+
     return {
-      action: `Playing ${ytMatch[1]} on YouTube. Don't judge my music taste.`,
+      action: `Searching ${ytSearchMatch[1]} on YouTube`,
       url: `https://www.youtube.com/results?search_query=${query}`,
       isBrowserAction: true,
     };
   }
 
-  // Media Search: "Search [query] on Spotify"
-  const spotifyMatch = lowerCmd.match(/^search\s+(.+?)\s+on\s+spotify$/);
-  if (spotifyMatch) {
-    const query = encodeURIComponent(spotifyMatch[1].trim());
+  // -------- PLAY ON YOUTUBE --------
+  const ytPlayMatch = lowerCmd.match(/play (.+) on youtube/);
+
+  if (ytPlayMatch) {
+
+    const query = encodeURIComponent(ytPlayMatch[1]);
+
     return {
-      action: `Searching ${spotifyMatch[1]} on Spotify. Hope it's a banger.`,
-      url: `https://open.spotify.com/search/${query}`,
+      action: `Playing ${ytPlayMatch[1]} on YouTube`,
+      url: `https://www.youtube.com/results?search_query=${query}`,
       isBrowserAction: true,
     };
   }
 
-  // WhatsApp Web: "Send a WhatsApp message to [number] saying [message]"
-  const waMatch = lowerCmd.match(
-    /^send\s+a\s+whatsapp\s+message\s+to\s+([\d\+\s]+)\s+saying\s+(.+)$/,
-  );
-  if (waMatch) {
-    const number = waMatch[1].replace(/\s+/g, "");
-    const message = encodeURIComponent(waMatch[2].trim());
+  // -------- GOOGLE SEARCH --------
+  const googleSearchMatch = lowerCmd.match(/search (.+)/);
+
+  if (googleSearchMatch) {
+
+    const query = encodeURIComponent(googleSearchMatch[1]);
+
     return {
-      action: `Sending your message. Let's hope they reply, Raman.`,
-      url: `https://web.whatsapp.com/send?phone=${number}&text=${message}`,
+      action: `Searching ${googleSearchMatch[1]} on Google`,
+      url: `https://www.google.com/search?q=${query}`,
       isBrowserAction: true,
     };
   }
 
-  return { action: "", isBrowserAction: false };
-}
-// Universal Website Opener
-const openSiteMatch = lowerCmd.match(/(open|go to|visit)\s+(.+)/);
-
-if (openSiteMatch) {
-
-  let site = openSiteMatch[2]
-    .replace("website","")
-    .replace("site","")
-    .trim();
-
-  site = site.replace(/\s+/g,"");
-
-  if(!site.includes(".")){
-    site = site + ".com";
+  // -------- OPEN YOUTUBE DIRECTLY --------
+  if (
+    lowerCmd.includes("open youtube") ||
+    lowerCmd.includes("youtube khol") ||
+    lowerCmd.includes("youtube kholna")
+  ) {
+    return {
+      action: "Opening YouTube",
+      url: "https://www.youtube.com",
+      isBrowserAction: true,
+    };
   }
 
+  // -------- OPEN INSTAGRAM --------
+  if (
+    lowerCmd.includes("open instagram") ||
+    lowerCmd.includes("instagram khol")
+  ) {
+    return {
+      action: "Opening Instagram",
+      url: "https://www.instagram.com",
+      isBrowserAction: true,
+    };
+  }
+
+  // -------- OPEN NETFLIX --------
+  if (
+    lowerCmd.includes("open netflix") ||
+    lowerCmd.includes("netflix khol")
+  ) {
+    return {
+      action: "Opening Netflix",
+      url: "https://www.netflix.com",
+      isBrowserAction: true,
+    };
+  }
+
+  // -------- FALLBACK --------
   return {
-    action: `Opening ${site} for you.`,
-    url: `https://${site}`,
-    isBrowserAction: true,
+    action: "",
+    isBrowserAction: false,
   };
 }
