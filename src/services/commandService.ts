@@ -61,3 +61,25 @@ export function processCommand(command: string): {
 
   return { action: "", isBrowserAction: false };
 }
+// Universal Website Opener
+const openSiteMatch = lowerCmd.match(/(open|go to|visit)\s+(.+)/);
+
+if (openSiteMatch) {
+
+  let site = openSiteMatch[2]
+    .replace("website","")
+    .replace("site","")
+    .trim();
+
+  site = site.replace(/\s+/g,"");
+
+  if(!site.includes(".")){
+    site = site + ".com";
+  }
+
+  return {
+    action: `Opening ${site} for you.`,
+    url: `https://${site}`,
+    isBrowserAction: true,
+  };
+}
