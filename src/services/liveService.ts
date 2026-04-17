@@ -191,7 +191,10 @@ export class LiveSessionManager {
   public onExpire: () => void = () => { };
 
   constructor() {
-    this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    this.ai = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: { apiVersion: "v1alpha" },
+    });
   }
 
   // ── start ──────────────────────────────────────────────────────────────────
