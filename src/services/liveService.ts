@@ -323,7 +323,7 @@ export class LiveSessionManager {
       console.log("[LiveSession] Connecting to Live API...");
       try {
         this.sessionPromise = this.ai.live.connect({
-          model: "gemini-2.0-flash-live-001",
+          model: "gemini-live-2.0-flash",
           config: {
             responseModalities: [Modality.AUDIO],
             speechConfig: {
