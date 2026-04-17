@@ -193,7 +193,7 @@ export class LiveSessionManager {
   constructor() {
     this.ai = new GoogleGenAI({
       apiKey: process.env.GEMINI_API_KEY,
-      httpOptions: { apiVersion: "v1alpha" },
+      httpOptions: { apiVersion: "v1beta" },
     });
   }
 
@@ -323,7 +323,7 @@ export class LiveSessionManager {
       console.log("[LiveSession] Connecting to Live API...");
       try {
         this.sessionPromise = this.ai.live.connect({
-          model: "gemini-live-2.0-flash",
+          model: "models/gemini-2.0-flash-exp",
           config: {
             responseModalities: [Modality.AUDIO],
             speechConfig: {
