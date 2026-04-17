@@ -267,7 +267,7 @@ export class LiveSessionManager {
       console.log("[LiveSession] Connecting to Live API...");
       try {
         this.sessionPromise = this.ai.live.connect({
-          model: "gemini-2.0-flash-live-001",
+          model: "gemini-2.0-flash-live-preview",
           config: {
             responseModalities: [Modality.AUDIO],
             speechConfig: {
@@ -459,9 +459,12 @@ export class LiveSessionManager {
           }
         });
 
-        // Resolve session once and store the direct reference so onaudioprocess
-        // can call sendRealtimeInput synchronously without a new .then() chain.
-        this.session = await this.sessionPromise;
+        // Store the resolved session reference non-blockingly so onaudioprocess
+        // can call sendRealtimeInput directly without a .then() chain each time.
+        // We do NOT await here — awaiting would block start() until the WebSocket
+        // closes (in some SDK builds the Promise resolves on close, not on open),
+        // which would tear down the session immediately.
+        this.sessionPromise.then(s => { this.session = s; }).catch(() => {});
       } catch (apiError: any) {
         console.error("[LiveSession] API Connection error:", apiError);
         throw new Error("API_ERROR: Could not connect to Gemini Live. This might be due to an invalid API key or region restrictions.");
