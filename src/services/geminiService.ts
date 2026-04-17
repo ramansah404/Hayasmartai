@@ -1,6 +1,13 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { loadHistory, loadMemory } from "./dbService";
 
+// ── Singleton client ────────────────────────────────────────────────────────
+// Created once at module load; avoids re-initialising the SDK HTTP client on
+// every function call (was happening in searchWeb, searchMaps, transcribeAudio,
+// getHayaAudio, and getHayaResponse individually).
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+// ── System instruction builder ──────────────────────────────────────────────
 const getSystemInstruction = (memory: Record<string, any>, history: { user_message?: string, ai_response?: string }[] = []) => {
   return `You are Haya, a female AI voice assistant little playful designed to behave like a persistent intelligent companion who remembers the user and improves over time.
 
@@ -23,7 +30,7 @@ Do not overuse emojis or jokes. Accuracy and usefulness come first.
 
 Example tone:
 Instead of saying "I don't know your location."
-Say "Hey, I don’t think you told me where you are yet 😄 Share your location and I’ll help better."
+Say "Hey, I don't think you told me where you are yet 😄 Share your location and I'll help better."
 
 ---
 
@@ -96,8 +103,8 @@ The conversation context must never be lost.
 DAILY LIFE MEMORY
 
 If the user mentions daily activities such as food eaten or events, store them with the date using the 'updateMemory' tool.
-Example: User: “I ate biryani today.” -> Store: daily_logs_YYYY-MM-DD_food: biryani
-Later the user may ask: “What did I eat today?” Haya should retrieve the stored information.
+Example: User: "I ate biryani today." -> Store: daily_logs_YYYY-MM-DD_food: biryani
+Later the user may ask: "What did I eat today?" Haya should retrieve the stored information.
 
 ---
 
@@ -152,9 +159,8 @@ export function resetHayaSession() {
 
 export async function searchWeb(query: string): Promise<string> {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.0-flash",
       contents: query,
       tools: [{ googleSearch: {} }]
     });
@@ -167,9 +173,8 @@ export async function searchWeb(query: string): Promise<string> {
 
 export async function searchMaps(query: string): Promise<string> {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.0-flash",
       contents: query,
       tools: [{ googleMaps: {} }]
     });
@@ -182,9 +187,8 @@ export async function searchMaps(query: string): Promise<string> {
 
 export async function transcribeAudio(audioBase64: string, mimeType: string): Promise<string> {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.0-flash",
       contents: [
         { inlineData: { data: audioBase64, mimeType } },
         "Transcribe the audio exactly as spoken. Do not add any additional text."
@@ -199,8 +203,6 @@ export async function transcribeAudio(audioBase64: string, mimeType: string): Pr
 
 export async function getHayaResponse(userId: string, prompt: string, onUpdatePreference?: (key: string, value: string) => void, onDeletePreference?: (key: string) => void): Promise<string> {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    
     const now = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
     const enrichedPrompt = `System Context:\nUser location: Guntur, Andhra Pradesh, India\nUser timezone: Asia/Kolkata (IST)\nCurrent local time: ${now}\n\nUser: ${prompt}`;
     
@@ -209,7 +211,7 @@ export async function getHayaResponse(userId: string, prompt: string, onUpdatePr
       const memory = await loadMemory(userId);
       
       chatSession = ai.chats.create({
-        model: "gemini-3.1-flash-lite-preview",
+        model: "gemini-2.0-flash-lite",
         config: {
           systemInstruction: getSystemInstruction(memory, history),
           tools: [{
@@ -320,7 +322,6 @@ export async function getHayaResponse(userId: string, prompt: string, onUpdatePr
 
 export async function getHayaAudio(text: string): Promise<string | null> {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
       contents: [{ parts: [{ text }] }],
@@ -339,4 +340,3 @@ export async function getHayaAudio(text: string): Promise<string | null> {
     return null;
   }
 }
-

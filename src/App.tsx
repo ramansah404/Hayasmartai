@@ -84,13 +84,19 @@ export default function App() {
   const liveSessionRef = useRef<LiveSessionManager | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const scrollToBottom = () => {
+  // Refs for settings modal new-preference inputs — avoids document.getElementById
+  const newPrefKeyRef = useRef<HTMLInputElement>(null);
+  const newPrefValueRef = useRef<HTMLInputElement>(null);
+
+  // scrollToBottom is memoised so it never forces a re-render;
+  // only depends on messages, not on every appState transition.
+  const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+  }, []);
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, appState]);
+  }, [messages, scrollToBottom]);
 
   const handleTextCommand = useCallback(async (finalTranscript: string) => {
     if (!finalTranscript.trim() || !user) {
@@ -147,7 +153,10 @@ export default function App() {
       }
       setAppState("idle");
     }
-  }, [isMuted, isSessionActive, user, preferences]);
+  // `preferences` removed from deps — the callback reads from preferencesRef, not
+  // the state value, so including it was causing unnecessary recreations on every
+  // preference write (which happens frequently during live sessions).
+  }, [isMuted, isSessionActive, user]);
 
   useEffect(() => {
     return () => {
@@ -455,36 +464,36 @@ export default function App() {
                 
                 <div className="flex gap-2 items-center mt-2">
                   <input 
+                    ref={newPrefKeyRef}
                     type="text" 
                     placeholder="New Key (e.g., city)" 
-                    id="newPrefKey"
                     className="w-1/3 bg-black/50 border border-white/10 rounded-lg p-2 text-sm text-white outline-none focus:border-violet-500/50"
                   />
                   <input 
+                    ref={newPrefValueRef}
                     type="text" 
                     placeholder="Value" 
-                    id="newPrefValue"
                     className="flex-1 bg-black/50 border border-white/10 rounded-lg p-2 text-sm text-white outline-none focus:border-violet-500/50"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
-                        const keyInput = document.getElementById('newPrefKey') as HTMLInputElement;
-                        const valInput = document.getElementById('newPrefValue') as HTMLInputElement;
-                        if (keyInput.value && valInput.value) {
-                          setPreferences(prev => ({...prev, [keyInput.value]: valInput.value}));
-                          keyInput.value = '';
-                          valInput.value = '';
+                        const k = newPrefKeyRef.current;
+                        const v = newPrefValueRef.current;
+                        if (k?.value && v?.value) {
+                          setPreferences(prev => ({...prev, [k.value]: v.value}));
+                          k.value = '';
+                          v.value = '';
                         }
                       }
                     }}
                   />
                   <button 
                     onClick={() => {
-                      const keyInput = document.getElementById('newPrefKey') as HTMLInputElement;
-                      const valInput = document.getElementById('newPrefValue') as HTMLInputElement;
-                      if (keyInput.value && valInput.value) {
-                        setPreferences(prev => ({...prev, [keyInput.value]: valInput.value}));
-                        keyInput.value = '';
-                        valInput.value = '';
+                      const k = newPrefKeyRef.current;
+                      const v = newPrefValueRef.current;
+                      if (k?.value && v?.value) {
+                        setPreferences(prev => ({...prev, [k.value]: v.value}));
+                        k.value = '';
+                        v.value = '';
                       }
                     }}
                     className="p-2 text-green-400 hover:bg-green-500/20 rounded-lg transition-colors font-bold"

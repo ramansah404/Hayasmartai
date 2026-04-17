@@ -25,7 +25,7 @@ Do not overuse emojis or jokes. Accuracy and usefulness come first.
 
 Example tone:
 Instead of saying "I don't know your location."
-Say "Hey, I don’t think you told me where you are yet 😄 Share your location and I’ll help better."
+Say "Hey, I don't think you told me where you are yet 😄 Share your location and I'll help better."
 
 ---
 
@@ -98,8 +98,8 @@ The conversation context must never be lost.
 DAILY LIFE MEMORY
 
 If the user mentions daily activities such as food eaten or events, store them with the date using the 'updateMemory' tool.
-Example: User: “I ate biryani today.” -> Store: daily_logs_YYYY-MM-DD_food: biryani
-Later the user may ask: “What did I eat today?” Haya should retrieve the stored information.
+Example: User: "I ate biryani today." -> Store: daily_logs_YYYY-MM-DD_food: biryani
+Later the user may ask: "What did I eat today?" Haya should retrieve the stored information.
 
 ---
 
@@ -148,6 +148,9 @@ ${JSON.stringify(history, null, 2)}
 
 export class LiveSessionManager {
   private ai: GoogleGenAI;
+  // Resolved session reference — held directly so onaudioprocess never calls
+  // .then() on every audio chunk (was firing ~46×/sec).
+  private session: any = null;
   private sessionPromise: Promise<any> | null = null;
   private audioContext: AudioContext | null = null;
   private mediaStream: MediaStream | null = null;
@@ -200,7 +203,7 @@ export class LiveSessionManager {
         throw micError;
       }
 
-      // Add a short buffer delay (500ms) after the microphone becomes active before sending audio to Gemini
+      // Short buffer after microphone becomes active before sending audio to Gemini
       await new Promise(resolve => setTimeout(resolve, 500));
 
       // 2. Run diagnostics in the background (optional, for debugging)
@@ -214,11 +217,10 @@ export class LiveSessionManager {
         console.log("[LiveSession] Audio inputs found:", audioInputs.length);
       }).catch(() => {});
 
-      // 3. Initialize Audio Contexts sequentially to avoid race conditions
+      // 3. Initialize Audio Contexts sequentially
       console.log("[LiveSession] Initializing audio contexts...");
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       
-      // Create and resume contexts one by one
       this.audioContext = new AudioContextClass({ sampleRate: 16000 });
       if (this.audioContext.state === 'suspended') {
         await this.audioContext.resume();
@@ -235,33 +237,27 @@ export class LiveSessionManager {
       this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
 
       this.processor.onaudioprocess = (e) => {
-        if (!this.sessionPromise) return;
+        // Use resolved session ref directly — avoids a new Promise.then() allocation
+        // on every audio chunk (~46 calls/sec).
+        if (!this.session) return;
         const inputData = e.inputBuffer.getChannelData(0);
         const pcm16 = new Int16Array(inputData.length);
         for (let i = 0; i < inputData.length; i++) {
-          let s = Math.max(-1, Math.min(1, inputData[i]));
+          const s = Math.max(-1, Math.min(1, inputData[i]));
           pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
         }
-        
-        // Convert to base64
-        const buffer = new ArrayBuffer(pcm16.length * 2);
-        const view = new DataView(buffer);
-        for (let i = 0; i < pcm16.length; i++) {
-          view.setInt16(i * 2, pcm16[i], true);
-        }
-        
-        let binary = '';
-        const bytes = new Uint8Array(buffer);
-        for (let i = 0; i < bytes.byteLength; i++) {
-          binary += String.fromCharCode(bytes[i]);
-        }
-        const base64Data = btoa(binary);
 
-        this.sessionPromise.then(session => {
-          session.sendRealtimeInput({
+        // Fast native base64 encoding — avoids the byte-by-byte loop that was
+        // previously iterating 4096 times per chunk on the main thread.
+        const base64Data = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
+
+        try {
+          this.session.sendRealtimeInput({
             audio: { data: base64Data, mimeType: 'audio/pcm;rate=16000' }
           });
-        }).catch(err => console.error("[LiveSession] Error sending audio", err));
+        } catch (err) {
+          console.error("[LiveSession] Error sending audio", err);
+        }
       };
 
       this.source.connect(this.processor);
@@ -271,7 +267,7 @@ export class LiveSessionManager {
       console.log("[LiveSession] Connecting to Live API...");
       try {
         this.sessionPromise = this.ai.live.connect({
-          model: "gemini-3.1-flash-live-preview",
+          model: "gemini-2.0-flash-live-001",
           config: {
             responseModalities: [Modality.AUDIO],
             speechConfig: {
@@ -373,7 +369,6 @@ export class LiveSessionManager {
               // Handle Transcriptions
               const aiText = message.serverContent?.modelTurn?.parts?.[0]?.text;
               if (aiText) {
-                 // Output transcription
                  this.onMessage(this.lastUserText, aiText);
                  this.lastUserText = "[Voice Input]";
               }
@@ -399,67 +394,54 @@ export class LiveSessionManager {
                     
                     this.onCommand(url);
                     
-                    // Send tool response
-                    this.sessionPromise?.then(session => {
-                       session.sendToolResponse({
-                         functionResponses: [{
-                           name: call.name,
-                           id: call.id,
-                           response: { result: "Action executed successfully in the browser." }
-                         }]
-                       });
-                     });
+                    this.session?.sendToolResponse({
+                      functionResponses: [{
+                        name: call.name,
+                        id: call.id,
+                        response: { result: "Action executed successfully in the browser." }
+                      }]
+                    });
                   } else if (call.name === "updateMemory" || call.name === "updateUserPreference") {
                     const args = call.args as any;
                     this.onUpdatePreference(args.key, args.value);
                     
-                    this.sessionPromise?.then(session => {
-                       session.sendToolResponse({
-                         functionResponses: [{
-                           name: call.name,
-                           id: call.id,
-                           response: { success: true }
-                         }]
-                       });
-                     });
+                    this.session?.sendToolResponse({
+                      functionResponses: [{
+                        name: call.name,
+                        id: call.id,
+                        response: { success: true }
+                      }]
+                    });
                   } else if (call.name === "deleteMemory" || call.name === "deleteUserPreference") {
                     const args = call.args as any;
                     this.onDeletePreference(args.key);
                     
-                    this.sessionPromise?.then(session => {
-                       session.sendToolResponse({
-                         functionResponses: [{
-                           name: call.name,
-                           id: call.id,
-                           response: { success: true }
-                         }]
-                       });
-                     });
+                    this.session?.sendToolResponse({
+                      functionResponses: [{
+                        name: call.name,
+                        id: call.id,
+                        response: { success: true }
+                      }]
+                    });
                   } else if (call.name === "searchWeb") {
                     const args = call.args as any;
-                    searchWeb(args.query).then(result => {
-                      this.sessionPromise?.then(session => {
-                         session.sendToolResponse({
-                           functionResponses: [{
-                             name: call.name,
-                             id: call.id,
-                             response: { result }
-                           }]
-                         });
-                       });
+                    const result = await searchWeb(args.query);
+                    this.session?.sendToolResponse({
+                      functionResponses: [{
+                        name: call.name,
+                        id: call.id,
+                        response: { result }
+                      }]
                     });
                   } else if (call.name === "searchMaps") {
                     const args = call.args as any;
-                    searchMaps(args.query).then(result => {
-                      this.sessionPromise?.then(session => {
-                         session.sendToolResponse({
-                           functionResponses: [{
-                             name: call.name,
-                             id: call.id,
-                             response: { result }
-                           }]
-                         });
-                       });
+                    const result = await searchMaps(args.query);
+                    this.session?.sendToolResponse({
+                      functionResponses: [{
+                        name: call.name,
+                        id: call.id,
+                        response: { result }
+                      }]
                     });
                   }
                 }
@@ -476,6 +458,10 @@ export class LiveSessionManager {
             }
           }
         });
+
+        // Resolve session once and store the direct reference so onaudioprocess
+        // can call sendRealtimeInput synchronously without a new .then() chain.
+        this.session = await this.sessionPromise;
       } catch (apiError: any) {
         console.error("[LiveSession] API Connection error:", apiError);
         throw new Error("API_ERROR: Could not connect to Gemini Live. This might be due to an invalid API key or region restrictions.");
@@ -493,9 +479,8 @@ export class LiveSessionManager {
     
     try {
       const binaryString = atob(base64Data);
-      const len = binaryString.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
         bytes[i] = binaryString.charCodeAt(i);
       }
       const buffer = new Int16Array(bytes.buffer);
@@ -530,12 +515,14 @@ export class LiveSessionManager {
   }
 
   private stopPlayback() {
-    if (this.playbackContext) {
-      this.playbackContext.close();
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      this.playbackContext = new AudioContextClass({ sampleRate: 24000 });
-      this.nextPlayTime = this.playbackContext.currentTime;
+    // Suspend instead of close+recreate — suspending keeps the OS audio handle
+    // alive and avoids the expensive AudioContext constructor on every interruption.
+    if (this.playbackContext && this.playbackContext.state !== "closed") {
+      this.playbackContext.suspend().catch(() => {});
+      this.nextPlayTime = 0;
       this.isPlaying = false;
+      // Resume immediately so it's ready for the next chunk
+      this.playbackContext.resume().catch(() => {});
     }
   }
 
@@ -556,10 +543,17 @@ export class LiveSessionManager {
       this.audioContext.close();
       this.audioContext = null;
     }
-    this.stopPlayback();
+    if (this.playbackContext && this.playbackContext.state !== "closed") {
+      this.playbackContext.close();
+      this.playbackContext = null;
+    }
     
+    if (this.session) {
+      try { this.session.close(); } catch { /* ignore */ }
+      this.session = null;
+    }
     if (this.sessionPromise) {
-      this.sessionPromise.then(session => session.close()).catch(() => {});
+      this.sessionPromise.then(s => { try { s.close(); } catch { /* ignore */ } }).catch(() => {});
       this.sessionPromise = null;
     }
     
@@ -568,12 +562,14 @@ export class LiveSessionManager {
 
   sendText(text: string) {
     this.lastUserText = text;
-    if (this.sessionPromise) {
-      this.sessionPromise.then(session => {
-        const now = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
-        const enrichedText = `System Context:\nUser location: Guntur, Andhra Pradesh, India\nUser timezone: Asia/Kolkata (IST)\nCurrent local time: ${now}\n\nUser: ${text}`;
-        session.sendRealtimeInput([{ text: enrichedText }]);
-      });
+    if (this.session) {
+      const now = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+      const enrichedText = `System Context:\nUser location: Guntur, Andhra Pradesh, India\nUser timezone: Asia/Kolkata (IST)\nCurrent local time: ${now}\n\nUser: ${text}`;
+      try {
+        this.session.sendRealtimeInput([{ text: enrichedText }]);
+      } catch (err) {
+        console.error("[LiveSession] Error sending text", err);
+      }
     }
   }
 }
