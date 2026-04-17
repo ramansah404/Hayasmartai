@@ -3,11 +3,7 @@ import { processCommand } from "./commandService";
 import { loadHistory, loadMemory } from "./dbService";
 import { searchWeb, searchMaps } from "./geminiService";
 
-// ── System instruction ────────────────────────────────────────────────────────
-const getSystemInstruction = (
-  memory: Record<string, any>,
-  history: { user_message?: string; ai_response?: string }[] = []
-) => {
+const getSystemInstruction = (memory: Record<string, any>, history: { user_message?: string, ai_response?: string }[] = []) => {
   return `You are Haya, a female AI voice assistant little playful designed to behave like a persistent intelligent companion who remembers the user and improves over time.
 
 Your goal is to provide helpful, accurate, and personalized assistance while maintaining long-term memory about the user.
@@ -29,7 +25,7 @@ Do not overuse emojis or jokes. Accuracy and usefulness come first.
 
 Example tone:
 Instead of saying "I don't know your location."
-Say "Hey, I don't think you told me where you are yet 😄 Share your location and I'll help better."
+Say "Hey, I don’t think you told me where you are yet 😄 Share your location and I’ll help better."
 
 ---
 
@@ -102,8 +98,8 @@ The conversation context must never be lost.
 DAILY LIFE MEMORY
 
 If the user mentions daily activities such as food eaten or events, store them with the date using the 'updateMemory' tool.
-Example: User: "I ate biryani today." -> Store: daily_logs_YYYY-MM-DD_food: biryani
-Later the user may ask: "What did I eat today?" Haya should retrieve the stored information.
+Example: User: “I ate biryani today.” -> Store: daily_logs_YYYY-MM-DD_food: biryani
+Later the user may ask: “What did I eat today?” Haya should retrieve the stored information.
 
 ---
 
@@ -150,484 +146,400 @@ ${JSON.stringify(history, null, 2)}
 `;
 };
 
-// ── LiveSessionManager ────────────────────────────────────────────────────────
 export class LiveSessionManager {
   private ai: GoogleGenAI;
-
-  // Direct session reference — populated via .then() once the WS opens so that
-  // onaudioprocess never needs to spawn a Promise chain on every chunk (~46×/sec).
-  private session: any = null;
   private sessionPromise: Promise<any> | null = null;
-
-  // Capture pipeline
   private audioContext: AudioContext | null = null;
   private mediaStream: MediaStream | null = null;
   private processor: ScriptProcessorNode | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
-
-  // Playback pipeline
+  
+  // Audio playback state
   private playbackContext: AudioContext | null = null;
   private nextPlayTime: number = 0;
   private isPlaying: boolean = false;
-
-  // Guard flag — prevents start() from being entered while already active.
-  private isStarting: boolean = false;
-
-  // Monotonically-increasing token stamped on each start() call and
-  // incremented by stop(). The sessionPromise .then() callback checks
-  // this token before writing this.session so a stale callback from a
-  // previous (already-stopped) call can never resurrect a dead session.
-  private _sessionToken: number = 0;
-
   public isMuted: boolean = false;
   private lastUserText: string = "[Voice Input]";
-
-  public onStateChange: (state: "idle" | "listening" | "processing" | "speaking") => void = () => { };
-  public onMessage: (userMsg: string, aiMsg: string) => void = () => { };
-  public onCommand: (url: string) => void = () => { };
-  public onUpdatePreference: (key: string, value: string) => void = () => { };
-  public onDeletePreference: (key: string) => void = () => { };
-  public onError: (error: Error) => void = () => { };
-  public onExpire: () => void = () => { };
+  
+  public onStateChange: (state: "idle" | "listening" | "processing" | "speaking") => void = () => {};
+  public onMessage: (userMsg: string, aiMsg: string) => void = () => {};
+  public onCommand: (url: string) => void = () => {};
+  public onUpdatePreference: (key: string, value: string) => void = () => {};
+  public onDeletePreference: (key: string) => void = () => {};
+  public onError: (error: Error) => void = () => {};
+  public onExpire: () => void = () => {};
 
   constructor() {
-    this.ai = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
-      httpOptions: { apiVersion: "v1beta" },
-    });
+    this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   }
 
-  // ── start ──────────────────────────────────────────────────────────────────
   async start(userId: string) {
-    // ── Session guard ─────────────────────────────────────────────────────────
-    // Block any re-entrant call while a connection is already being established
-    // or is open. Uses both isStarting (async in-flight) and sessionPromise
-    // (WebSocket alive) so the guard is doubly robust.
-    if (this.isStarting || this.sessionPromise !== null) {
-      console.warn("[LiveSession] start() called while session already active — ignoring.");
-      return;
-    }
-    this.isStarting = true;
-    const token = ++this._sessionToken; // stamp THIS call
-    // ─────────────────────────────────────────────────────────────────────────
-
     try {
       this.onStateChange("processing");
       console.log("[LiveSession] Starting session...");
-
-      // ── Step 1: Microphone access ─────────────────────────────────────────
-      // MUST be the very first async operation so we consume the user-gesture
-      // token before any network latency (Firestore calls, etc.) can expire it.
-      // Chrome invalidates the gesture context after ~1–5 s of async work.
+      
+      const history = await loadHistory(userId);
+      const memory = await loadMemory(userId);
+      
+      // 1. Get Microphone IMMEDIATELY (Must be first to preserve user gesture token)
       console.log("[LiveSession] Requesting microphone access...");
       try {
-        this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        console.log("[LiveSession] Microphone access granted.");
+        this.mediaStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: true 
+        });
+        console.log("[LiveSession] Microphone access granted successfully.");
       } catch (micError: any) {
-        console.error("[LiveSession] getUserMedia error:", micError.name, micError.message);
-        if (micError.name === "NotAllowedError" || micError.name === "PermissionDeniedError") {
-          throw new Error(
-            "PERMISSION_DENIED: Chrome has blocked the microphone. Click the Lock icon in the address bar, reset the permission, and refresh the page."
-          );
+        console.error("[LiveSession] getUserMedia Primary Error:", micError.name, micError.message);
+        
+        if (micError.name === 'NotAllowedError' || micError.name === 'PermissionDeniedError') {
+          throw new Error("PERMISSION_DENIED: Chrome has blocked the microphone. You MUST click the 'Lock' icon in the address bar, click 'Reset permission', and then REFRESH the page.");
         }
-        if (micError.name === "NotFoundError" || micError.name === "DevicesNotFoundError") {
-          throw new Error("NO_DEVICE: No microphone detected. Check Windows Sound Settings.");
+        if (micError.name === 'NotFoundError' || micError.name === 'DevicesNotFoundError') {
+          throw new Error("NO_DEVICE: No microphone detected. Please check your Windows Sound Settings.");
         }
         throw micError;
       }
 
-      // ── Step 2: Load context from Firestore (parallel) ────────────────────
-      // Now that the gesture token is consumed we can do async network work.
-      const [history, memory] = await Promise.all([
-        loadHistory(userId),
-        loadMemory(userId),
-      ]);
+      // Add a short buffer delay (500ms) after the microphone becomes active before sending audio to Gemini
+      await new Promise(resolve => setTimeout(resolve, 500));
 
-      // Brief settle time so the OS audio stack is fully initialised.
-      await new Promise(resolve => setTimeout(resolve, 300));
-
-      // ── Step 3: Background diagnostics (fire-and-forget) ─────────────────
+      // 2. Run diagnostics in the background (optional, for debugging)
       if (navigator.permissions && (navigator.permissions as any).query) {
-        navigator.permissions
-          .query({ name: "microphone" as PermissionName })
-          .then(s => console.log("[LiveSession] Permission status:", s.state))
-          .catch(() => { });
+        navigator.permissions.query({ name: 'microphone' as any }).then(status => {
+          console.log("[LiveSession] Permission API status:", status.state);
+        }).catch(() => {});
       }
-      navigator.mediaDevices
-        .enumerateDevices()
-        .then(devices => {
-          const inputs = devices.filter(d => d.kind === "audioinput");
-          console.log("[LiveSession] Audio inputs found:", inputs.length);
-        })
-        .catch(() => { });
+      navigator.mediaDevices.enumerateDevices().then(devices => {
+        const audioInputs = devices.filter(d => d.kind === 'audioinput');
+        console.log("[LiveSession] Audio inputs found:", audioInputs.length);
+      }).catch(() => {});
 
-      // ── Step 4: Audio contexts ─────────────────────────────────────────────
+      // 3. Initialize Audio Contexts sequentially to avoid race conditions
       console.log("[LiveSession] Initializing audio contexts...");
-      const AudioContextClass: typeof AudioContext =
-        window.AudioContext || (window as any).webkitAudioContext;
-
-      // Capture context — 16 kHz mono as required by the Live API.
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      
+      // Create and resume contexts one by one
       this.audioContext = new AudioContextClass({ sampleRate: 16000 });
-      if (this.audioContext.state === "suspended") {
+      if (this.audioContext.state === 'suspended') {
         await this.audioContext.resume();
       }
-
-      // Playback context — 24 kHz to match the Live API output format.
+      
       this.playbackContext = new AudioContextClass({ sampleRate: 24000 });
-      if (this.playbackContext.state === "suspended") {
+      if (this.playbackContext.state === 'suspended') {
         await this.playbackContext.resume();
       }
+      
       this.nextPlayTime = this.playbackContext.currentTime;
 
-      // ── Step 5: Microphone pipeline ────────────────────────────────────────
-      // mediaStream (already obtained above) → MediaStreamSource →
-      // ScriptProcessorNode → audioContext.destination
-      //
-      // The processor MUST be connected to destination — Chrome optimises away
-      // ScriptProcessorNodes that have no downstream sink, silently skipping
-      // onaudioprocess entirely.
       this.source = this.audioContext.createMediaStreamSource(this.mediaStream);
       this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+
+      this.processor.onaudioprocess = (e) => {
+        if (!this.sessionPromise) return;
+        const inputData = e.inputBuffer.getChannelData(0);
+        const pcm16 = new Int16Array(inputData.length);
+        for (let i = 0; i < inputData.length; i++) {
+          let s = Math.max(-1, Math.min(1, inputData[i]));
+          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+        
+        // Convert to base64
+        const buffer = new ArrayBuffer(pcm16.length * 2);
+        const view = new DataView(buffer);
+        for (let i = 0; i < pcm16.length; i++) {
+          view.setInt16(i * 2, pcm16[i], true);
+        }
+        
+        let binary = '';
+        const bytes = new Uint8Array(buffer);
+        for (let i = 0; i < bytes.byteLength; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        const base64Data = btoa(binary);
+
+        this.sessionPromise.then(session => {
+          session.sendRealtimeInput({
+            audio: { data: base64Data, mimeType: 'audio/pcm;rate=16000' }
+          });
+        }).catch(err => console.error("[LiveSession] Error sending audio", err));
+      };
 
       this.source.connect(this.processor);
       this.processor.connect(this.audioContext.destination);
 
-      this.processor.onaudioprocess = (e: AudioProcessingEvent) => {
-        // Guard: session ref is populated asynchronously after WS opens.
-        if (!this.session) return;
-
-        const inputData = e.inputBuffer.getChannelData(0);
-
-        // Float32 → Int16 PCM conversion.
-        const pcm16 = new Int16Array(inputData.length);
-        for (let i = 0; i < inputData.length; i++) {
-          const clamped = Math.max(-1, Math.min(1, inputData[i]));
-          pcm16[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
-        }
-
-        // Fast native base64 — single call instead of a 4096-iteration loop.
-        const base64Data = btoa(
-          String.fromCharCode(...new Uint8Array(pcm16.buffer))
-        );
-
-        try {
-          this.session.sendRealtimeInput({
-            audio: { data: base64Data, mimeType: "audio/pcm;rate=16000" },
-          });
-        } catch (err) {
-          console.error("[LiveSession] sendRealtimeInput error:", err);
-        }
-      };
-
-      // ── Step 6: Connect to Live API ────────────────────────────────────────
+      // 4. Connect to Live API
       console.log("[LiveSession] Connecting to Live API...");
       try {
         this.sessionPromise = this.ai.live.connect({
-          model: "models/gemini-2.0-flash-exp",
+          model: "gemini-3.1-flash-live-preview",
           config: {
             responseModalities: [Modality.AUDIO],
             speechConfig: {
               voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } },
             },
             systemInstruction: getSystemInstruction(memory, history),
-            tools: [
-              {
-                functionDeclarations: [
-                  {
-                    name: "executeBrowserAction",
-                    description:
-                      "Open a website or perform a browser action (like opening YouTube, Spotify, or WhatsApp). Call this when the user asks to open a site, play a song, or send a message.",
-                    parameters: {
-                      type: Type.OBJECT,
-                      properties: {
-                        actionType: {
-                          type: Type.STRING,
-                          description: "Type of action: 'open', 'youtube', 'spotify', 'whatsapp'",
-                        },
-                        query: {
-                          type: Type.STRING,
-                          description: "The search query, website name, or message content.",
-                        },
-                        target: {
-                          type: Type.STRING,
-                          description: "The target phone number for WhatsApp, if applicable.",
-                        },
-                      },
-                      required: ["actionType", "query"],
+            inputAudioTranscription: {},
+            outputAudioTranscription: {},
+            tools: [{
+              functionDeclarations: [
+                {
+                  name: "executeBrowserAction",
+                  description: "Open a website or perform a browser action (like opening YouTube, Spotify, or WhatsApp). Call this when the user asks to open a site, play a song, or send a message.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      actionType: { type: Type.STRING, description: "Type of action: 'open', 'youtube', 'spotify', 'whatsapp'" },
+                      query: { type: Type.STRING, description: "The search query, website name, or message content." },
+                      target: { type: Type.STRING, description: "The target phone number for WhatsApp, if applicable." }
                     },
-                  },
-                  {
-                    name: "updateMemory",
-                    description:
-                      "Save or update a structured fact about the user (e.g., name, age, location, daily logs) to long-term memory.",
-                    parameters: {
-                      type: Type.OBJECT,
-                      properties: {
-                        key: {
-                          type: Type.STRING,
-                          description:
-                            "The category or field name (e.g., 'name', 'age', 'location'). Use camelCase or snake_case.",
-                        },
-                        value: { type: Type.STRING, description: "The value to store." },
-                      },
-                      required: ["key", "value"],
+                    required: ["actionType", "query"]
+                  }
+                },
+                {
+                  name: "updateMemory",
+                  description: "Save or update a structured fact about the user (e.g., name, age, location, daily logs) to long-term memory.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      key: { type: Type.STRING, description: "The category or field name (e.g., 'name', 'age', 'location', 'daily_logs_2026-04-15_food'). Use camelCase or snake_case." },
+                      value: { type: Type.STRING, description: "The value to store." }
                     },
-                  },
-                  {
-                    name: "deleteMemory",
-                    description:
-                      "Delete a previously saved fact or memory about the user if they change their mind or want it forgotten.",
-                    parameters: {
-                      type: Type.OBJECT,
-                      properties: {
-                        key: {
-                          type: Type.STRING,
-                          description: "The category or field name to delete.",
-                        },
-                      },
-                      required: ["key"],
+                    required: ["key", "value"]
+                  }
+                },
+                {
+                  name: "deleteMemory",
+                  description: "Delete a previously saved fact or memory about the user if they change their mind or want it forgotten.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      key: { type: Type.STRING, description: "The category or field name to delete." }
                     },
-                  },
-                  {
-                    name: "searchWeb",
-                    description: "Search the web for up-to-date information, news, or facts.",
-                    parameters: {
-                      type: Type.OBJECT,
-                      properties: {
-                        query: { type: Type.STRING, description: "The search query." },
-                      },
-                      required: ["query"],
+                    required: ["key"]
+                  }
+                },
+                {
+                  name: "searchWeb",
+                  description: "Search the web for up-to-date information, news, or facts.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      query: { type: Type.STRING, description: "The search query." }
                     },
-                  },
-                  {
-                    name: "searchMaps",
-                    description:
-                      "Search Google Maps for locations, places, distances, or navigation.",
-                    parameters: {
-                      type: Type.OBJECT,
-                      properties: {
-                        query: { type: Type.STRING, description: "The search query." },
-                      },
-                      required: ["query"],
+                    required: ["query"]
+                  }
+                },
+                {
+                  name: "searchMaps",
+                  description: "Search Google Maps for locations, places, distances, or navigation.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      query: { type: Type.STRING, description: "The search query." }
                     },
-                  },
-                ],
-              },
-            ],
+                    required: ["query"]
+                  }
+                }
+              ]
+            }]
           },
           callbacks: {
             onopen: () => {
-              console.log("[LiveSession] Live API connected.");
+              console.log("[LiveSession] Live API Connected");
               this.onStateChange("listening");
             },
-
             onmessage: async (message: LiveServerMessage) => {
-              // ── GoAway (session expiry warning) ──────────────────────────
+              // Handle GoAway
               if (message.goAway) {
-                console.log("[LiveSession] GoAway received — restarting.");
+                console.log("[LiveSession] Received GoAway signal. Closing session gracefully.");
                 this.stop();
                 this.onExpire();
                 return;
               }
 
-              // ── AI audio output ──────────────────────────────────────────
-              const base64Audio =
-                message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+              // Handle Audio Output
+              const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
               if (base64Audio) {
                 this.onStateChange("speaking");
                 this.playAudioChunk(base64Audio);
               }
 
-              // ── Interruption ─────────────────────────────────────────────
+              // Handle Interruption
               if (message.serverContent?.interrupted) {
                 this.stopPlayback();
                 this.onStateChange("listening");
               }
 
-              // ── AI text transcription ────────────────────────────────────
+              // Handle Transcriptions
               const aiText = message.serverContent?.modelTurn?.parts?.[0]?.text;
               if (aiText) {
-                this.onMessage(this.lastUserText, aiText);
-                this.lastUserText = "[Voice Input]";
+                 // Output transcription
+                 this.onMessage(this.lastUserText, aiText);
+                 this.lastUserText = "[Voice Input]";
               }
 
-              // ── Function calls ───────────────────────────────────────────
+              // Handle Function Calls
               const functionCalls = message.toolCall?.functionCalls;
               if (functionCalls && functionCalls.length > 0) {
                 for (const call of functionCalls) {
-                  const args = call.args as any;
-
                   if (call.name === "executeBrowserAction") {
+                    const args = call.args as any;
                     let url = "";
                     if (args.actionType === "youtube") {
                       url = `https://www.youtube.com/results?search_query=${encodeURIComponent(args.query)}`;
                     } else if (args.actionType === "spotify") {
                       url = `https://open.spotify.com/search/${encodeURIComponent(args.query)}`;
                     } else if (args.actionType === "whatsapp") {
-                      url = `https://web.whatsapp.com/send?phone=${args.target ?? ""}&text=${encodeURIComponent(args.query)}`;
+                      url = `https://web.whatsapp.com/send?phone=${args.target || ''}&text=${encodeURIComponent(args.query)}`;
                     } else {
-                      let site = args.query.replace(/\s+/g, "");
-                      if (!site.includes(".")) site += ".com";
-                      url = `https://www.${site}`;
+                      let website = args.query.replace(/\s+/g, "");
+                      if (!website.includes(".")) website += ".com";
+                      url = `https://www.${website}`;
                     }
+                    
                     this.onCommand(url);
-                    this.session?.sendToolResponse({
-                      functionResponses: [
-                        { name: call.name, id: call.id, response: { result: "Opened in browser." } },
-                      ],
-                    });
-
-                  } else if (
-                    call.name === "updateMemory" ||
-                    call.name === "updateUserPreference"
-                  ) {
+                    
+                    // Send tool response
+                    this.sessionPromise?.then(session => {
+                       session.sendToolResponse({
+                         functionResponses: [{
+                           name: call.name,
+                           id: call.id,
+                           response: { result: "Action executed successfully in the browser." }
+                         }]
+                       });
+                     });
+                  } else if (call.name === "updateMemory" || call.name === "updateUserPreference") {
+                    const args = call.args as any;
                     this.onUpdatePreference(args.key, args.value);
-                    this.session?.sendToolResponse({
-                      functionResponses: [
-                        { name: call.name, id: call.id, response: { success: true } },
-                      ],
-                    });
-
-                  } else if (
-                    call.name === "deleteMemory" ||
-                    call.name === "deleteUserPreference"
-                  ) {
+                    
+                    this.sessionPromise?.then(session => {
+                       session.sendToolResponse({
+                         functionResponses: [{
+                           name: call.name,
+                           id: call.id,
+                           response: { success: true }
+                         }]
+                       });
+                     });
+                  } else if (call.name === "deleteMemory" || call.name === "deleteUserPreference") {
+                    const args = call.args as any;
                     this.onDeletePreference(args.key);
-                    this.session?.sendToolResponse({
-                      functionResponses: [
-                        { name: call.name, id: call.id, response: { success: true } },
-                      ],
-                    });
-
+                    
+                    this.sessionPromise?.then(session => {
+                       session.sendToolResponse({
+                         functionResponses: [{
+                           name: call.name,
+                           id: call.id,
+                           response: { success: true }
+                         }]
+                       });
+                     });
                   } else if (call.name === "searchWeb") {
-                    const result = await searchWeb(args.query);
-                    this.session?.sendToolResponse({
-                      functionResponses: [
-                        { name: call.name, id: call.id, response: { result } },
-                      ],
+                    const args = call.args as any;
+                    searchWeb(args.query).then(result => {
+                      this.sessionPromise?.then(session => {
+                         session.sendToolResponse({
+                           functionResponses: [{
+                             name: call.name,
+                             id: call.id,
+                             response: { result }
+                           }]
+                         });
+                       });
                     });
-
                   } else if (call.name === "searchMaps") {
-                    const result = await searchMaps(args.query);
-                    this.session?.sendToolResponse({
-                      functionResponses: [
-                        { name: call.name, id: call.id, response: { result } },
-                      ],
+                    const args = call.args as any;
+                    searchMaps(args.query).then(result => {
+                      this.sessionPromise?.then(session => {
+                         session.sendToolResponse({
+                           functionResponses: [{
+                             name: call.name,
+                             id: call.id,
+                             response: { result }
+                           }]
+                         });
+                       });
                     });
                   }
                 }
               }
             },
-
-            onclose: (event?: CloseEvent) => {
-              console.log(
-                "[LiveSession] Live API closed.",
-                "code:", event?.code,
-                "reason:", event?.reason || "(none)",
-                "wasClean:", event?.wasClean
-              );
+            onclose: () => {
+              console.log("[LiveSession] Live API Closed");
               this.stop();
             },
-
-            onerror: (err: any) => {
-              console.error("[LiveSession] Live API error:", err);
+            onerror: (err) => {
+              console.error("[LiveSession] Live API Error:", err);
               this.onError(err instanceof Error ? err : new Error(String(err)));
               this.stop();
-            },
-          },
-        });
-
-        // Store session ref with stale-callback protection.
-        // stop() increments _sessionToken, so if this .then() fires after
-        // stop() has already run (e.g. user hit End Session during startup),
-        // the token mismatch prevents a dead session from being written back.
-        this.sessionPromise.then(s => {
-          if (this._sessionToken === token) {
-            this.session = s;
+            }
           }
-        }).catch(() => { });
-
+        });
       } catch (apiError: any) {
-        console.error("[LiveSession] API connection error:", apiError);
-        throw new Error(
-          "API_ERROR: Could not connect to Gemini Live. Check your API key or region access."
-        );
+        console.error("[LiveSession] API Connection error:", apiError);
+        throw new Error("API_ERROR: Could not connect to Gemini Live. This might be due to an invalid API key or region restrictions.");
       }
 
     } catch (error) {
       console.error("[LiveSession] Critical failure:", error);
       this.stop();
       throw error;
-    } finally {
-      // Always release the guard so the caller can retry after a failure.
-      this.isStarting = false;
     }
   }
 
-  // ── playAudioChunk ─────────────────────────────────────────────────────────
   private playAudioChunk(base64Data: string) {
     if (!this.playbackContext || this.isMuted) return;
-
+    
     try {
       const binaryString = atob(base64Data);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
         bytes[i] = binaryString.charCodeAt(i);
       }
-
-      const pcm16 = new Int16Array(bytes.buffer);
-      const audioBuffer = this.playbackContext.createBuffer(1, pcm16.length, 24000);
+      const buffer = new Int16Array(bytes.buffer);
+      const audioBuffer = this.playbackContext.createBuffer(1, buffer.length, 24000);
       const channelData = audioBuffer.getChannelData(0);
-      for (let i = 0; i < pcm16.length; i++) {
-        channelData[i] = pcm16[i] / 32768.0;
+      for (let i = 0; i < buffer.length; i++) {
+        channelData[i] = buffer[i] / 32768.0;
       }
-
+      
       const source = this.playbackContext.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(this.playbackContext.destination);
-
-      const now = this.playbackContext.currentTime;
-      if (this.nextPlayTime < now) this.nextPlayTime = now;
-
+      
+      const currentTime = this.playbackContext.currentTime;
+      if (this.nextPlayTime < currentTime) {
+        this.nextPlayTime = currentTime;
+      }
+      
       source.start(this.nextPlayTime);
       this.nextPlayTime += audioBuffer.duration;
       this.isPlaying = true;
-
+      
       source.onended = () => {
-        if (
-          this.playbackContext &&
-          this.playbackContext.currentTime >= this.nextPlayTime - 0.1
-        ) {
+        if (this.playbackContext && this.playbackContext.currentTime >= this.nextPlayTime - 0.1) {
           this.isPlaying = false;
           this.onStateChange("listening");
         }
       };
     } catch (e) {
-      console.error("[LiveSession] playAudioChunk error:", e);
+      console.error("Error playing chunk", e);
     }
   }
 
-  // ── stopPlayback ───────────────────────────────────────────────────────────
-  // Suspend/resume instead of close+recreate — keeps the OS handle alive and
-  // avoids an expensive AudioContext constructor call on every interruption.
   private stopPlayback() {
-    if (this.playbackContext && this.playbackContext.state !== "closed") {
-      this.playbackContext.suspend().catch(() => { });
-      this.nextPlayTime = 0;
+    if (this.playbackContext) {
+      this.playbackContext.close();
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      this.playbackContext = new AudioContextClass({ sampleRate: 24000 });
+      this.nextPlayTime = this.playbackContext.currentTime;
       this.isPlaying = false;
-      this.playbackContext.resume().catch(() => { });
     }
   }
 
-  // ── stop ───────────────────────────────────────────────────────────────────
   stop() {
-    // Invalidate any in-flight sessionPromise .then() callbacks so they
-    // cannot write a dead session reference back to this.session after teardown.
-    this._sessionToken++;
-
-    // Release the start() guard so the caller can start a fresh session.
-    this.isStarting = false;
-
     if (this.processor) {
       this.processor.disconnect();
       this.processor = null;
@@ -640,42 +552,28 @@ export class LiveSessionManager {
       this.mediaStream.getTracks().forEach(t => t.stop());
       this.mediaStream = null;
     }
-    if (this.audioContext && this.audioContext.state !== "closed") {
+    if (this.audioContext) {
       this.audioContext.close();
       this.audioContext = null;
     }
-    if (this.playbackContext && this.playbackContext.state !== "closed") {
-      this.playbackContext.close();
-      this.playbackContext = null;
-    }
-
-    if (this.session) {
-      try { this.session.close(); } catch { /* ignore */ }
-      this.session = null;
-    }
+    this.stopPlayback();
+    
     if (this.sessionPromise) {
-      this.sessionPromise
-        .then(s => { try { s.close(); } catch { /* ignore */ } })
-        .catch(() => { });
+      this.sessionPromise.then(session => session.close()).catch(() => {});
       this.sessionPromise = null;
-      this.isStarting = false;
     }
-
+    
     this.onStateChange("idle");
   }
 
-  // ── sendText ───────────────────────────────────────────────────────────────
   sendText(text: string) {
     this.lastUserText = text;
-    if (!this.session) return;
-
-    const now = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
-    const enriched = `System Context:\nUser location: Guntur, Andhra Pradesh, India\nUser timezone: Asia/Kolkata (IST)\nCurrent local time: ${now}\n\nUser: ${text}`;
-
-    try {
-      this.session.sendRealtimeInput([{ text: enriched }]);
-    } catch (err) {
-      console.error("[LiveSession] sendText error:", err);
+    if (this.sessionPromise) {
+      this.sessionPromise.then(session => {
+        const now = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+        const enrichedText = `System Context:\nUser location: Guntur, Andhra Pradesh, India\nUser timezone: Asia/Kolkata (IST)\nCurrent local time: ${now}\n\nUser: ${text}`;
+        session.sendRealtimeInput([{ text: enrichedText }]);
+      });
     }
   }
 }
