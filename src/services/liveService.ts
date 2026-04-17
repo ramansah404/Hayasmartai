@@ -320,15 +320,13 @@ export class LiveSessionManager {
       console.log("[LiveSession] Connecting to Live API...");
       try {
         this.sessionPromise = this.ai.live.connect({
-          model: "gemini-2.0-flash-live-preview",
+          model: "gemini-2.0-flash-live-001",
           config: {
             responseModalities: [Modality.AUDIO],
             speechConfig: {
               voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } },
             },
             systemInstruction: getSystemInstruction(memory, history),
-            inputAudioTranscription: {},
-            outputAudioTranscription: {},
             tools: [
               {
                 functionDeclarations: [
@@ -518,8 +516,13 @@ export class LiveSessionManager {
               }
             },
 
-            onclose: () => {
-              console.log("[LiveSession] Live API closed.");
+            onclose: (event?: CloseEvent) => {
+              console.log(
+                "[LiveSession] Live API closed.",
+                "code:", event?.code,
+                "reason:", event?.reason || "(none)",
+                "wasClean:", event?.wasClean
+              );
               this.stop();
             },
 
