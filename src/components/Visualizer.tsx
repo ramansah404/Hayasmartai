@@ -10,8 +10,8 @@ export default function Visualizer({ state }: VisualizerProps) {
   const getRingAnimation = (index: number, reverse: boolean = false) => {
     const baseSpeed = state === "listening" ? 3 : state === "processing" ? 1.5 : state === "speaking" ? 2 : 15;
     return {
-      rotate: reverse ? [-360, 0] : [0, 360],
-      transition: { duration: baseSpeed + index * 2, repeat: Infinity, ease: "linear" }
+      //rotate: reverse ? [-360, 0] : [0, 360],
+      //transition: { duration: baseSpeed + index * 2, repeat: Infinity, ease: "linear" }
     };
   };
 
@@ -20,27 +20,27 @@ export default function Visualizer({ state }: VisualizerProps) {
       return {
         scale: [1, 1.05, 0.98, 1.02, 1],
         opacity: [0.8, 1, 0.8, 1, 0.8],
-        transition: { duration: 0.5, repeat: Infinity, ease: "easeInOut" }
+        transition: { duration: 1.5, repeat: 2, ease: "easeInOut" }
       };
     }
     if (state === "listening") {
       return {
         scale: [1, 1.02, 1],
         opacity: [0.7, 1, 0.7],
-        transition: { duration: 1, repeat: Infinity, ease: "easeInOut" }
+        transition: { duration: 1.5, repeat: 2, ease: "easeInOut" }
       };
     }
     if (state === "processing") {
       return {
         scale: [0.98, 1.02, 0.98],
         opacity: [0.6, 0.9, 0.6],
-        transition: { duration: 0.8, repeat: Infinity, ease: "linear" }
+        transition: { duration: 1.5, repeat: 2, ease: "linear" }
       };
     }
     return {
       scale: [1, 1.01, 1],
       opacity: [0.4, 0.6, 0.4],
-      transition: { duration: 4, repeat: Infinity, ease: "easeInOut" }
+      transition: { duration: 1.5, repeat: 2, ease: "easeInOut" }
     };
   };
 
@@ -88,7 +88,7 @@ export default function Visualizer({ state }: VisualizerProps) {
         animate={getRingAnimation(1, true)}
         className={`absolute w-[55%] h-[55%] rounded-full border-[2px] border-dashed ${theme.border} opacity-50`}
       />
-      
+
       {/* Ring 5: Core HUD Ring */}
       <motion.div
         animate={getRingAnimation(0, false)}
@@ -102,7 +102,7 @@ export default function Visualizer({ state }: VisualizerProps) {
         style={{ boxShadow: `0 0 40px ${theme.color}, inset 0 0 30px ${theme.color}` }}
       >
         {/* Center Text */}
-        <div 
+        <div
           className="font-bold tracking-[0.3em] text-xl md:text-3xl lg:text-4xl text-white"
           style={{ textShadow: `0 0 15px ${theme.color}, 0 0 30px ${theme.color}` }}
         >
