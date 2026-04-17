@@ -173,6 +173,12 @@ export class LiveSessionManager {
   // Guard flag — prevents start() from being entered while already active.
   private isStarting: boolean = false;
 
+  // Monotonically-increasing token stamped on each start() call and
+  // incremented by stop(). The sessionPromise .then() callback checks
+  // this token before writing this.session so a stale callback from a
+  // previous (already-stopped) call can never resurrect a dead session.
+  private _sessionToken: number = 0;
+
   public isMuted: boolean = false;
   private lastUserText: string = "[Voice Input]";
 
@@ -199,18 +205,17 @@ export class LiveSessionManager {
       return;
     }
     this.isStarting = true;
+    const token = ++this._sessionToken; // stamp THIS call
     // ─────────────────────────────────────────────────────────────────────────
 
     try {
       this.onStateChange("processing");
       console.log("[LiveSession] Starting session...");
 
-      const history = await loadHistory(userId);
-      const memory  = await loadMemory(userId);
-
-      // ── Step 1: Microphone access ──────────────────────────────────────────
-      // Must happen first, inside the user-gesture window, before any async
-      // work that could cause the browser to revoke the gesture token.
+      // ── Step 1: Microphone access ─────────────────────────────────────────
+      // MUST be the very first async operation so we consume the user-gesture
+      // token before any network latency (Firestore calls, etc.) can expire it.
+      // Chrome invalidates the gesture context after ~1–5 s of async work.
       console.log("[LiveSession] Requesting microphone access...");
       try {
         this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -228,11 +233,17 @@ export class LiveSessionManager {
         throw micError;
       }
 
-      // Brief settle time so the OS audio stack is stable before we start
-      // streaming PCM to the API.
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // ── Step 2: Load context from Firestore (parallel) ────────────────────
+      // Now that the gesture token is consumed we can do async network work.
+      const [history, memory] = await Promise.all([
+        loadHistory(userId),
+        loadMemory(userId),
+      ]);
 
-      // ── Step 2: Background diagnostics ────────────────────────────────────
+      // Brief settle time so the OS audio stack is fully initialised.
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      // ── Step 3: Background diagnostics (fire-and-forget) ─────────────────
       if (navigator.permissions && (navigator.permissions as any).query) {
         navigator.permissions
           .query({ name: "microphone" as PermissionName })
@@ -247,7 +258,7 @@ export class LiveSessionManager {
         })
         .catch(() => {});
 
-      // ── Step 3: Audio contexts ─────────────────────────────────────────────
+      // ── Step 4: Audio contexts ─────────────────────────────────────────────
       console.log("[LiveSession] Initializing audio contexts...");
       const AudioContextClass: typeof AudioContext =
         window.AudioContext || (window as any).webkitAudioContext;
@@ -265,7 +276,7 @@ export class LiveSessionManager {
       }
       this.nextPlayTime = this.playbackContext.currentTime;
 
-      // ── Step 4: Microphone pipeline ────────────────────────────────────────
+      // ── Step 5: Microphone pipeline ────────────────────────────────────────
       // mediaStream (already obtained above) → MediaStreamSource →
       // ScriptProcessorNode → audioContext.destination
       //
@@ -305,7 +316,7 @@ export class LiveSessionManager {
         }
       };
 
-      // ── Step 5: Connect to Live API ────────────────────────────────────────
+      // ── Step 6: Connect to Live API ────────────────────────────────────────
       console.log("[LiveSession] Connecting to Live API...");
       try {
         this.sessionPromise = this.ai.live.connect({
@@ -520,11 +531,14 @@ export class LiveSessionManager {
           },
         });
 
-        // Store session ref non-blockingly so start() returns immediately and
-        // keeps the WebSocket alive. Awaiting here would block until the WS
-        // closes in some SDK builds, instantly tearing down the session.
+        // Store session ref with stale-callback protection.
+        // stop() increments _sessionToken, so if this .then() fires after
+        // stop() has already run (e.g. user hit End Session during startup),
+        // the token mismatch prevents a dead session from being written back.
         this.sessionPromise.then(s => {
-          this.session = s;
+          if (this._sessionToken === token) {
+            this.session = s;
+          }
         }).catch(() => {});
 
       } catch (apiError: any) {
@@ -601,7 +615,11 @@ export class LiveSessionManager {
 
   // ── stop ───────────────────────────────────────────────────────────────────
   stop() {
-    // Release the guard so a fresh start() can be called after teardown.
+    // Invalidate any in-flight sessionPromise .then() callbacks so they
+    // cannot write a dead session reference back to this.session after teardown.
+    this._sessionToken++;
+
+    // Release the start() guard so the caller can start a fresh session.
     this.isStarting = false;
 
     if (this.processor) {
