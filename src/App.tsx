@@ -123,7 +123,7 @@ export default function App() {
     if (commandResult.isBrowserAction) {
       responseText = commandResult.action;
       saveConversation(user.uid, finalTranscript, responseText);
-      
+
       if (!isMuted) {
         setAppState("speaking");
         const audioBase64 = await getHayaAudio(responseText);
@@ -141,12 +141,12 @@ export default function App() {
       }, 1500);
     } else {
       // 2. General Chit-Chat via Gemini
-      responseText = await getHayaResponse(user.uid, finalTranscript, 
+      responseText = await getHayaResponse(user.uid, finalTranscript,
         (key, value) => updatePreference(user.uid, key, value),
         (key) => deletePreference(user.uid, key)
       );
       saveConversation(user.uid, finalTranscript, responseText);
-      
+
       if (!isMuted) {
         setAppState("speaking");
         const audioBase64 = await getHayaAudio(responseText);
@@ -156,16 +156,16 @@ export default function App() {
       }
       setAppState("idle");
     }
-  // `preferences` removed from deps — the callback reads from preferencesRef, not
-  // the state value, so including it was causing unnecessary recreations on every
-  // preference write (which happens frequently during live sessions).
+    // `preferences` removed from deps — the callback reads from preferencesRef, not
+    // the state value, so including it was causing unnecessary recreations on every
+    // preference write (which happens frequently during live sessions).
   }, [isMuted, isSessionActive, user]);
 
   useEffect(() => {
     return () => {
-      if (liveSessionRef.current) {
-        liveSessionRef.current.stop();
-      }
+      //if (liveSessionRef.current) {
+      //  liveSessionRef.current.stop();
+      //}
     };
   }, []);
 
@@ -178,27 +178,27 @@ export default function App() {
     try {
       setIsSessionActive(true);
       resetHayaSession();
-      
+
       const session = new LiveSessionManager();
       session.isMuted = isMuted;
       liveSessionRef.current = session;
-      
+
       session.onStateChange = (state) => {
         setAppState(state);
       };
-      
+
       session.onMessage = (userMsg, aiMsg) => {
         if (user) {
           saveConversation(user.uid, userMsg, aiMsg);
         }
       };
-      
+
       session.onCommand = (url) => {
         setTimeout(() => {
           window.open(url, "_blank");
         }, 1000);
       };
-      
+
       session.onUpdatePreference = (key, value) => {
         if (user) {
           updatePreference(user.uid, key, value);
@@ -323,7 +323,7 @@ export default function App() {
   const handleTextSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!textInput.trim()) return;
-    
+
     handleTextCommand(textInput);
     setTextInput("");
     setShowTextInput(false);
@@ -364,8 +364,8 @@ export default function App() {
   return (
     <div className="h-[100dvh] w-screen bg-[#050505] text-white flex flex-col items-center justify-between font-sans relative overflow-hidden m-0 p-0">
       {showPermissionModal && (
-        <PermissionModal 
-          onClose={() => setShowPermissionModal(false)} 
+        <PermissionModal
+          onClose={() => setShowPermissionModal(false)}
         />
       )}
 
@@ -429,13 +429,13 @@ export default function App() {
       {/* Settings Modal */}
       <AnimatePresence>
         {showSettings && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
           >
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
@@ -445,25 +445,25 @@ export default function App() {
               <p className="text-sm text-white/60 mb-4">
                 Haya automatically remembers facts about you. You can also manually add or edit them here.
               </p>
-              
+
               <div className="space-y-3 mb-6 max-h-60 overflow-y-auto pr-2">
                 {Object.entries(preferences).map(([key, value]) => (
                   <div key={key} className="flex gap-2 items-center">
-                    <input 
-                      type="text" 
-                      value={key} 
-                      readOnly 
+                    <input
+                      type="text"
+                      value={key}
+                      readOnly
                       className="w-1/3 bg-black/30 border border-white/10 rounded-lg p-2 text-sm text-white/70 outline-none"
                     />
-                    <input 
-                      type="text" 
-                      value={value} 
-                      onChange={(e) => setPreferences(prev => ({...prev, [key]: e.target.value}))}
+                    <input
+                      type="text"
+                      value={value}
+                      onChange={(e) => setPreferences(prev => ({ ...prev, [key]: e.target.value }))}
                       className="flex-1 bg-black/50 border border-white/10 rounded-lg p-2 text-sm text-white outline-none focus:border-violet-500/50"
                     />
-                    <button 
+                    <button
                       onClick={() => {
-                        const newPrefs = {...preferences};
+                        const newPrefs = { ...preferences };
                         delete newPrefs[key];
                         setPreferences(newPrefs);
                       }}
@@ -473,37 +473,37 @@ export default function App() {
                     </button>
                   </div>
                 ))}
-                
+
                 <div className="flex gap-2 items-center mt-2">
-                  <input 
+                  <input
                     ref={newPrefKeyRef}
-                    type="text" 
-                    placeholder="New Key (e.g., city)" 
+                    type="text"
+                    placeholder="New Key (e.g., city)"
                     className="w-1/3 bg-black/50 border border-white/10 rounded-lg p-2 text-sm text-white outline-none focus:border-violet-500/50"
                   />
-                  <input 
+                  <input
                     ref={newPrefValueRef}
-                    type="text" 
-                    placeholder="Value" 
+                    type="text"
+                    placeholder="Value"
                     className="flex-1 bg-black/50 border border-white/10 rounded-lg p-2 text-sm text-white outline-none focus:border-violet-500/50"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         const k = newPrefKeyRef.current;
                         const v = newPrefValueRef.current;
                         if (k?.value && v?.value) {
-                          setPreferences(prev => ({...prev, [k.value]: v.value}));
+                          setPreferences(prev => ({ ...prev, [k.value]: v.value }));
                           k.value = '';
                           v.value = '';
                         }
                       }
                     }}
                   />
-                  <button 
+                  <button
                     onClick={() => {
                       const k = newPrefKeyRef.current;
                       const v = newPrefValueRef.current;
                       if (k?.value && v?.value) {
-                        setPreferences(prev => ({...prev, [k.value]: v.value}));
+                        setPreferences(prev => ({ ...prev, [k.value]: v.value }));
                         k.value = '';
                         v.value = '';
                       }
@@ -516,13 +516,13 @@ export default function App() {
               </div>
 
               <div className="flex justify-end gap-3">
-                <button 
+                <button
                   onClick={() => setShowSettings(false)}
                   className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-sm font-medium transition-colors"
                 >
                   Cancel
                 </button>
-                <button 
+                <button
                   onClick={() => {
                     savePreferences(user.uid, preferences);
                     setShowSettings(false);
@@ -539,7 +539,7 @@ export default function App() {
 
       {/* Main Content - Visualizer & Chat */}
       <main className="absolute inset-0 flex flex-row items-center justify-between w-full h-full z-10 overflow-hidden pt-20 pb-24 px-4 md:px-12 pointer-events-none">
-        
+
         {/* Left Column: Haya Status */}
         <div className="flex w-[30%] lg:w-[25%] h-full flex-col justify-center gap-4 z-10">
           <div className="h-6">
@@ -589,14 +589,14 @@ export default function App() {
       <footer className="absolute bottom-0 left-0 w-full flex flex-col items-center justify-center pb-6 md:pb-8 z-20 shrink-0 gap-4">
         <AnimatePresence>
           {showTextInput && (
-            <motion.form 
+            <motion.form
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 20 }}
               onSubmit={handleTextSubmit}
               className="w-full max-w-md flex items-center gap-2 bg-white/5 border border-white/10 rounded-full p-1 pl-4 backdrop-blur-md shadow-2xl"
             >
-              <input 
+              <input
                 type="text"
                 value={textInput}
                 onChange={(e) => setTextInput(e.target.value)}
@@ -604,7 +604,7 @@ export default function App() {
                 className="flex-1 bg-transparent border-none outline-none text-white placeholder:text-white/30 text-sm"
                 autoFocus
               />
-              <button 
+              <button
                 type="button"
                 onMouseDown={startRecording}
                 onMouseUp={stopRecording}
@@ -616,7 +616,7 @@ export default function App() {
               >
                 <Mic size={16} />
               </button>
-              <button 
+              <button
                 type="submit"
                 disabled={!textInput.trim()}
                 className="p-2 rounded-full bg-violet-500 hover:bg-violet-600 disabled:opacity-50 disabled:hover:bg-violet-500 transition-colors"
@@ -632,10 +632,9 @@ export default function App() {
             onClick={toggleListening}
             className={`
               group relative flex items-center gap-3 px-8 py-4 rounded-full font-medium tracking-wide transition-all duration-300 shadow-2xl
-              ${
-                isSessionActive
-                  ? "bg-red-500/20 text-red-400 border border-red-500/50 hover:bg-red-500/30"
-                  : "bg-white/10 text-white border border-white/20 hover:bg-white/20 hover:scale-105"
+              ${isSessionActive
+                ? "bg-red-500/20 text-red-400 border border-red-500/50 hover:bg-red-500/30"
+                : "bg-white/10 text-white border border-white/20 hover:bg-white/20 hover:scale-105"
               }
             `}
           >
@@ -651,7 +650,7 @@ export default function App() {
               </>
             )}
           </button>
-          
+
           {!isSessionActive && (
             <button
               onClick={() => setShowTextInput(!showTextInput)}
