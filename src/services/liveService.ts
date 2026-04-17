@@ -182,13 +182,13 @@ export class LiveSessionManager {
   public isMuted: boolean = false;
   private lastUserText: string = "[Voice Input]";
 
-  public onStateChange: (state: "idle" | "listening" | "processing" | "speaking") => void = () => {};
-  public onMessage: (userMsg: string, aiMsg: string) => void = () => {};
-  public onCommand: (url: string) => void = () => {};
-  public onUpdatePreference: (key: string, value: string) => void = () => {};
-  public onDeletePreference: (key: string) => void = () => {};
-  public onError: (error: Error) => void = () => {};
-  public onExpire: () => void = () => {};
+  public onStateChange: (state: "idle" | "listening" | "processing" | "speaking") => void = () => { };
+  public onMessage: (userMsg: string, aiMsg: string) => void = () => { };
+  public onCommand: (url: string) => void = () => { };
+  public onUpdatePreference: (key: string, value: string) => void = () => { };
+  public onDeletePreference: (key: string) => void = () => { };
+  public onError: (error: Error) => void = () => { };
+  public onExpire: () => void = () => { };
 
   constructor() {
     this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -248,7 +248,7 @@ export class LiveSessionManager {
         navigator.permissions
           .query({ name: "microphone" as PermissionName })
           .then(s => console.log("[LiveSession] Permission status:", s.state))
-          .catch(() => {});
+          .catch(() => { });
       }
       navigator.mediaDevices
         .enumerateDevices()
@@ -256,7 +256,7 @@ export class LiveSessionManager {
           const inputs = devices.filter(d => d.kind === "audioinput");
           console.log("[LiveSession] Audio inputs found:", inputs.length);
         })
-        .catch(() => {});
+        .catch(() => { });
 
       // ── Step 4: Audio contexts ─────────────────────────────────────────────
       console.log("[LiveSession] Initializing audio contexts...");
@@ -283,7 +283,7 @@ export class LiveSessionManager {
       // The processor MUST be connected to destination — Chrome optimises away
       // ScriptProcessorNodes that have no downstream sink, silently skipping
       // onaudioprocess entirely.
-      this.source    = this.audioContext.createMediaStreamSource(this.mediaStream);
+      this.source = this.audioContext.createMediaStreamSource(this.mediaStream);
       this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
 
       this.source.connect(this.processor);
@@ -539,7 +539,7 @@ export class LiveSessionManager {
           if (this._sessionToken === token) {
             this.session = s;
           }
-        }).catch(() => {});
+        }).catch(() => { });
 
       } catch (apiError: any) {
         console.error("[LiveSession] API connection error:", apiError);
@@ -606,10 +606,10 @@ export class LiveSessionManager {
   // avoids an expensive AudioContext constructor call on every interruption.
   private stopPlayback() {
     if (this.playbackContext && this.playbackContext.state !== "closed") {
-      this.playbackContext.suspend().catch(() => {});
+      this.playbackContext.suspend().catch(() => { });
       this.nextPlayTime = 0;
       this.isPlaying = false;
-      this.playbackContext.resume().catch(() => {});
+      this.playbackContext.resume().catch(() => { });
     }
   }
 
@@ -650,8 +650,9 @@ export class LiveSessionManager {
     if (this.sessionPromise) {
       this.sessionPromise
         .then(s => { try { s.close(); } catch { /* ignore */ } })
-        .catch(() => {});
+        .catch(() => { });
       this.sessionPromise = null;
+      this.isStarting = false;
     }
 
     this.onStateChange("idle");
