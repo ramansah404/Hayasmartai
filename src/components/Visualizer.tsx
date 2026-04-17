@@ -47,10 +47,10 @@ export default function Visualizer({ state }: VisualizerProps) {
   // JARVIS color palette (Cyan/Blue) with Haya's personality (Violet/Pink hints)
   const getTheme = () => {
     switch (state) {
-      case "listening": return { color: "rgba(139, 92, 246, 1)", glow: "shadow-violet-500/60", border: "border-violet-400" };
-      case "processing": return { color: "rgba(56, 189, 248, 1)", glow: "shadow-sky-400/80", border: "border-sky-400" };
-      case "speaking": return { color: "rgba(236, 72, 153, 1)", glow: "shadow-pink-500/80", border: "border-pink-400" };
-      default: return { color: "rgba(6, 182, 212, 0.8)", glow: "shadow-cyan-500/40", border: "border-cyan-500/50" }; // Cyan for idle
+      case "listening": return { color: "rgba(139, 92, 246, 1)", glow: "shadow-violet-500/20", border: "border-violet-400" };
+      case "processing": return { color: "rgba(56, 189, 248, 1)", glow: "shadow-sky-400/20", border: "border-sky-400" };
+      case "speaking": return { color: "rgba(236, 72, 153, 1)", glow: "shadow-pink-500/20", border: "border-pink-400" };
+      default: return { color: "rgba(6, 182, 212, 0.8)", glow: "shadow-cyan-500/15", border: "border-cyan-500/50" }; // Cyan for idle
     }
   };
 
@@ -63,18 +63,6 @@ export default function Visualizer({ state }: VisualizerProps) {
         animate={getPulseAnimation()}
         className={`absolute w-[60%] h-[60%] rounded-full blur-[80px] ${theme.glow}`}
         style={{ backgroundColor: theme.color, opacity: 0.15 }}
-      />
-
-      {/* Ring 1: Massive Outer Dashed */}
-      <motion.div
-        animate={getRingAnimation(4, false)}
-        className={`absolute w-[100%] h-[100%] rounded-full border-[1px] border-dashed ${theme.border} opacity-20`}
-      />
-
-      {/* Ring 2: Segmented Thick Ring */}
-      <motion.div
-        animate={getRingAnimation(3, true)}
-        className={`absolute w-[85%] h-[85%] rounded-full border-[2px] border-dotted ${theme.border} opacity-30`}
       />
 
       {/* Ring 3: Scanner Ring (Solid with gaps) */}
