@@ -171,8 +171,16 @@ export default function App() {
 
   const startSession = async () => {
     if (!user) return;
-    // Ref-based guard — isSessionActive state is stale inside closures; a ref
-    // is always current and prevents two concurrent WebSocket connections.
+
+    // Primary guard: if a LiveSessionManager already exists, a session is either
+    // running or in the process of being torn down. Either way, do not start another.
+    if (liveSessionRef.current) {
+      console.log("[App] Session already exists — ignoring startSession call.");
+      return;
+    }
+
+    // Secondary guard: ref-based flag prevents re-entry during the async
+    // startup sequence (before liveSessionRef.current is assigned).
     if (isStartingSessionRef.current || isSessionActive) return;
     isStartingSessionRef.current = true;
     try {
@@ -223,9 +231,11 @@ export default function App() {
       };
 
       session.onExpire = () => {
-        console.log("Session expired. Restarting after teardown...");
-        // Wait for the old session's stop() to fully unwind before opening a
-        // new WebSocket — immediate restart races with the close handshake.
+        console.log("[App] Session expired. Restarting after teardown...");
+        // Clear the ref first so the liveSessionRef guard in startSession
+        // doesn't block the re-connect after the old session stops.
+        liveSessionRef.current = null;
+        // Wait for stop() to fully unwind before opening a new WebSocket.
         setTimeout(() => startSession(), 500);
       };
 
@@ -264,6 +274,7 @@ export default function App() {
 
   const toggleListening = async () => {
     if (isSessionActive) {
+      console.log("[App] Stopping session manually — user pressed End Session.");
       setIsSessionActive(false);
       if (liveSessionRef.current) {
         liveSessionRef.current.stop();
