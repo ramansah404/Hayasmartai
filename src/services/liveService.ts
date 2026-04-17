@@ -156,7 +156,11 @@ export class LiveSessionManager {
   private mediaStream: MediaStream | null = null;
   private processor: ScriptProcessorNode | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
-  
+
+  // Guard flag: prevents start() from being entered a second time while a
+  // connection is already being established or is open.
+  private isStarting: boolean = false;
+
   // Audio playback state
   private playbackContext: AudioContext | null = null;
   private nextPlayTime: number = 0;
@@ -177,10 +181,18 @@ export class LiveSessionManager {
   }
 
   async start(userId: string) {
+    // ── Session guard ────────────────────────────────────────────────────────
+    // Reject any re-entrant call while a session is already connecting or open.
+    if (this.isStarting || this.sessionPromise !== null) {
+      console.warn("[LiveSession] start() called while session already active — ignoring.");
+      return;
+    }
+    this.isStarting = true;
+    // ────────────────────────────────────────────────────────────────────────
     try {
       this.onStateChange("processing");
       console.log("[LiveSession] Starting session...");
-      
+
       const history = await loadHistory(userId);
       const memory = await loadMemory(userId);
       
@@ -474,6 +486,9 @@ export class LiveSessionManager {
       console.error("[LiveSession] Critical failure:", error);
       this.stop();
       throw error;
+    } finally {
+      // Always release the guard so callers can retry after a failure.
+      this.isStarting = false;
     }
   }
 
@@ -530,6 +545,9 @@ export class LiveSessionManager {
   }
 
   stop() {
+    // Release the guard so a fresh start() can be called after this teardown.
+    this.isStarting = false;
+
     if (this.processor) {
       this.processor.disconnect();
       this.processor = null;
@@ -550,7 +568,7 @@ export class LiveSessionManager {
       this.playbackContext.close();
       this.playbackContext = null;
     }
-    
+
     if (this.session) {
       try { this.session.close(); } catch { /* ignore */ }
       this.session = null;
@@ -559,7 +577,7 @@ export class LiveSessionManager {
       this.sessionPromise.then(s => { try { s.close(); } catch { /* ignore */ } }).catch(() => {});
       this.sessionPromise = null;
     }
-    
+
     this.onStateChange("idle");
   }
 

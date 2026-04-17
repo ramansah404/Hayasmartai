@@ -83,6 +83,9 @@ export default function App() {
 
   const liveSessionRef = useRef<LiveSessionManager | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Ref-based guard: prevents startSession() from being entered concurrently.
+  // Using a ref (not state) because state values are stale inside async closures.
+  const isStartingSessionRef = useRef(false);
 
   // Refs for settings modal new-preference inputs — avoids document.getElementById
   const newPrefKeyRef = useRef<HTMLInputElement>(null);
@@ -168,6 +171,10 @@ export default function App() {
 
   const startSession = async () => {
     if (!user) return;
+    // Ref-based guard — isSessionActive state is stale inside closures; a ref
+    // is always current and prevents two concurrent WebSocket connections.
+    if (isStartingSessionRef.current || isSessionActive) return;
+    isStartingSessionRef.current = true;
     try {
       setIsSessionActive(true);
       resetHayaSession();
@@ -216,8 +223,10 @@ export default function App() {
       };
 
       session.onExpire = () => {
-        console.log("Session expired. Restarting...");
-        startSession();
+        console.log("Session expired. Restarting after teardown...");
+        // Wait for the old session's stop() to fully unwind before opening a
+        // new WebSocket — immediate restart races with the close handshake.
+        setTimeout(() => startSession(), 500);
       };
 
       await session.start(user.uid);
@@ -228,11 +237,11 @@ export default function App() {
         stack: e.stack,
         cause: e.cause
       });
-      const isPermissionError = 
-        e.name === 'NotAllowedError' || 
-        e.name === 'PermissionDeniedError' || 
+      const isPermissionError =
+        e.name === 'NotAllowedError' ||
+        e.name === 'PermissionDeniedError' ||
         e.message?.includes('PERMISSION_DENIED');
-      
+
       const isNoDeviceError = e.message?.includes('NO_DEVICE');
       const isApiError = e.message?.includes('API_ERROR');
 
@@ -247,6 +256,9 @@ export default function App() {
       }
       setIsSessionActive(false);
       setAppState("idle");
+    } finally {
+      // Always release the guard, whether we succeeded or failed.
+      isStartingSessionRef.current = false;
     }
   };
 
