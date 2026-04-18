@@ -153,44 +153,45 @@ export class LiveSessionManager {
   private mediaStream: MediaStream | null = null;
   private processor: ScriptProcessorNode | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
-  
+
   // Audio playback state
   private playbackContext: AudioContext | null = null;
   private nextPlayTime: number = 0;
   private isPlaying: boolean = false;
   public isMuted: boolean = false;
   private lastUserText: string = "[Voice Input]";
-  
-  public onStateChange: (state: "idle" | "listening" | "processing" | "speaking") => void = () => {};
-  public onMessage: (userMsg: string, aiMsg: string) => void = () => {};
-  public onCommand: (url: string) => void = () => {};
-  public onUpdatePreference: (key: string, value: string) => void = () => {};
-  public onDeletePreference: (key: string) => void = () => {};
-  public onError: (error: Error) => void = () => {};
-  public onExpire: () => void = () => {};
+
+  public onStateChange: (state: "idle" | "listening" | "processing" | "speaking") => void = () => { };
+  public onMessage: (userMsg: string, aiMsg: string) => void = () => { };
+  public onCommand: (url: string) => void = () => { };
+  public onUpdatePreference: (key: string, value: string) => void = () => { };
+  public onDeletePreference: (key: string) => void = () => { };
+  public onError: (error: Error) => void = () => { };
+  public onExpire: () => void = () => { };
 
   constructor() {
-    this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    console.log("API Key:", import.meta.env.VITE_API_KEY);
+    this.ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_API_KEY });
   }
 
   async start(userId: string) {
     try {
       this.onStateChange("processing");
       console.log("[LiveSession] Starting session...");
-      
+
       const history = await loadHistory(userId);
       const memory = await loadMemory(userId);
-      
+
       // 1. Get Microphone IMMEDIATELY (Must be first to preserve user gesture token)
       console.log("[LiveSession] Requesting microphone access...");
       try {
-        this.mediaStream = await navigator.mediaDevices.getUserMedia({ 
-          audio: true 
+        this.mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: true
         });
         console.log("[LiveSession] Microphone access granted successfully.");
       } catch (micError: any) {
         console.error("[LiveSession] getUserMedia Primary Error:", micError.name, micError.message);
-        
+
         if (micError.name === 'NotAllowedError' || micError.name === 'PermissionDeniedError') {
           throw new Error("PERMISSION_DENIED: Chrome has blocked the microphone. You MUST click the 'Lock' icon in the address bar, click 'Reset permission', and then REFRESH the page.");
         }
@@ -207,28 +208,28 @@ export class LiveSessionManager {
       if (navigator.permissions && (navigator.permissions as any).query) {
         navigator.permissions.query({ name: 'microphone' as any }).then(status => {
           console.log("[LiveSession] Permission API status:", status.state);
-        }).catch(() => {});
+        }).catch(() => { });
       }
       navigator.mediaDevices.enumerateDevices().then(devices => {
         const audioInputs = devices.filter(d => d.kind === 'audioinput');
         console.log("[LiveSession] Audio inputs found:", audioInputs.length);
-      }).catch(() => {});
+      }).catch(() => { });
 
       // 3. Initialize Audio Contexts sequentially to avoid race conditions
       console.log("[LiveSession] Initializing audio contexts...");
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      
+
       // Create and resume contexts one by one
       this.audioContext = new AudioContextClass({ sampleRate: 16000 });
       if (this.audioContext.state === 'suspended') {
         await this.audioContext.resume();
       }
-      
+
       this.playbackContext = new AudioContextClass({ sampleRate: 24000 });
       if (this.playbackContext.state === 'suspended') {
         await this.playbackContext.resume();
       }
-      
+
       this.nextPlayTime = this.playbackContext.currentTime;
 
       this.source = this.audioContext.createMediaStreamSource(this.mediaStream);
@@ -242,14 +243,14 @@ export class LiveSessionManager {
           let s = Math.max(-1, Math.min(1, inputData[i]));
           pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
         }
-        
+
         // Convert to base64
         const buffer = new ArrayBuffer(pcm16.length * 2);
         const view = new DataView(buffer);
         for (let i = 0; i < pcm16.length; i++) {
           view.setInt16(i * 2, pcm16[i], true);
         }
-        
+
         let binary = '';
         const bytes = new Uint8Array(buffer);
         for (let i = 0; i < bytes.byteLength; i++) {
@@ -373,9 +374,9 @@ export class LiveSessionManager {
               // Handle Transcriptions
               const aiText = message.serverContent?.modelTurn?.parts?.[0]?.text;
               if (aiText) {
-                 // Output transcription
-                 this.onMessage(this.lastUserText, aiText);
-                 this.lastUserText = "[Voice Input]";
+                // Output transcription
+                this.onMessage(this.lastUserText, aiText);
+                this.lastUserText = "[Voice Input]";
               }
 
               // Handle Function Calls
@@ -396,70 +397,70 @@ export class LiveSessionManager {
                       if (!website.includes(".")) website += ".com";
                       url = `https://www.${website}`;
                     }
-                    
+
                     this.onCommand(url);
-                    
+
                     // Send tool response
                     this.sessionPromise?.then(session => {
-                       session.sendToolResponse({
-                         functionResponses: [{
-                           name: call.name,
-                           id: call.id,
-                           response: { result: "Action executed successfully in the browser." }
-                         }]
-                       });
-                     });
+                      session.sendToolResponse({
+                        functionResponses: [{
+                          name: call.name,
+                          id: call.id,
+                          response: { result: "Action executed successfully in the browser." }
+                        }]
+                      });
+                    });
                   } else if (call.name === "updateMemory" || call.name === "updateUserPreference") {
                     const args = call.args as any;
                     this.onUpdatePreference(args.key, args.value);
-                    
+
                     this.sessionPromise?.then(session => {
-                       session.sendToolResponse({
-                         functionResponses: [{
-                           name: call.name,
-                           id: call.id,
-                           response: { success: true }
-                         }]
-                       });
-                     });
+                      session.sendToolResponse({
+                        functionResponses: [{
+                          name: call.name,
+                          id: call.id,
+                          response: { success: true }
+                        }]
+                      });
+                    });
                   } else if (call.name === "deleteMemory" || call.name === "deleteUserPreference") {
                     const args = call.args as any;
                     this.onDeletePreference(args.key);
-                    
+
                     this.sessionPromise?.then(session => {
-                       session.sendToolResponse({
-                         functionResponses: [{
-                           name: call.name,
-                           id: call.id,
-                           response: { success: true }
-                         }]
-                       });
-                     });
+                      session.sendToolResponse({
+                        functionResponses: [{
+                          name: call.name,
+                          id: call.id,
+                          response: { success: true }
+                        }]
+                      });
+                    });
                   } else if (call.name === "searchWeb") {
                     const args = call.args as any;
                     searchWeb(args.query).then(result => {
                       this.sessionPromise?.then(session => {
-                         session.sendToolResponse({
-                           functionResponses: [{
-                             name: call.name,
-                             id: call.id,
-                             response: { result }
-                           }]
-                         });
-                       });
+                        session.sendToolResponse({
+                          functionResponses: [{
+                            name: call.name,
+                            id: call.id,
+                            response: { result }
+                          }]
+                        });
+                      });
                     });
                   } else if (call.name === "searchMaps") {
                     const args = call.args as any;
                     searchMaps(args.query).then(result => {
                       this.sessionPromise?.then(session => {
-                         session.sendToolResponse({
-                           functionResponses: [{
-                             name: call.name,
-                             id: call.id,
-                             response: { result }
-                           }]
-                         });
-                       });
+                        session.sendToolResponse({
+                          functionResponses: [{
+                            name: call.name,
+                            id: call.id,
+                            response: { result }
+                          }]
+                        });
+                      });
                     });
                   }
                 }
@@ -490,7 +491,7 @@ export class LiveSessionManager {
 
   private playAudioChunk(base64Data: string) {
     if (!this.playbackContext || this.isMuted) return;
-    
+
     try {
       const binaryString = atob(base64Data);
       const len = binaryString.length;
@@ -504,20 +505,20 @@ export class LiveSessionManager {
       for (let i = 0; i < buffer.length; i++) {
         channelData[i] = buffer[i] / 32768.0;
       }
-      
+
       const source = this.playbackContext.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(this.playbackContext.destination);
-      
+
       const currentTime = this.playbackContext.currentTime;
       if (this.nextPlayTime < currentTime) {
         this.nextPlayTime = currentTime;
       }
-      
+
       source.start(this.nextPlayTime);
       this.nextPlayTime += audioBuffer.duration;
       this.isPlaying = true;
-      
+
       source.onended = () => {
         if (this.playbackContext && this.playbackContext.currentTime >= this.nextPlayTime - 0.1) {
           this.isPlaying = false;
@@ -557,12 +558,12 @@ export class LiveSessionManager {
       this.audioContext = null;
     }
     this.stopPlayback();
-    
+
     if (this.sessionPromise) {
-      this.sessionPromise.then(session => session.close()).catch(() => {});
+      this.sessionPromise.then(session => session.close()).catch(() => { });
       this.sessionPromise = null;
     }
-    
+
     this.onStateChange("idle");
   }
 
